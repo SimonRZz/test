@@ -1,54 +1,30 @@
-// ==== Phomemo D30 Web Bluetooth Printer – working Qx protocol version ====
+// ==== Phomemo D30 Debug Printer – Testet mehrere Protokolle ====
 
 let device = null;
 let characteristic = null;
 let connected = false;
 const statusEl = document.getElementById("status");
 
-// --- Text & Emoji → Bitmap (12×40 mm = 320×96 px) ---
-async function textToBitmap(text) {
+// kleine 96x96 px Test-Block-Bitmap
+function makeTestBitmap() {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-
-  const labelHeight = 96; // 12 mm × 8 px/mm
-  const labelWidth = 320; // 40 mm × 8 px/mm
-  canvas.width = labelWidth;
-  canvas.height = labelHeight;
-
-  // Weißer Hintergrund
-  ctx.fillStyle = "white";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Text & Emojis in Schwarz zentriert
-  let fontSize = 36;
-  ctx.font = `bold ${fontSize}px Arial`;
+  const size = 96;
+  canvas.width = size;
+  canvas.height = size;
   ctx.fillStyle = "black";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
-  // Doppelte Kontur für kräftigeren Druck
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = "black";
-  ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
-
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  return convertImageDataToPhomemo(imageData);
+  ctx.fillRect(0, 0, size, size);
+  const imageData = ctx.getImageData(0, 0, size, size);
+  return imageData;
 }
 
-// --- Proprietäres D30-Bitmap-Format (Qx) ---
-function convertImageDataToPhomemo(imageData) {
+// konvertiert das Bild in D30-kompatibles 1-Bit-Array
+function to1Bit(imageData) {
   const width = imageData.width;
   const height = imageData.height;
   const bytesPerLine = Math.ceil(width / 8);
-  const output = [];
+  const bytes = [];
 
-  // Start-Header "Qx" = 0x51 0x78
-  output.push(0x51, 0x78, 0x00, 0x00);
-  output.push(bytesPerLine & 0xff, (bytesPerLine >> 8) & 0xff);
-  output.push(height & 0xff, (height >> 8) & 0xff);
-
-  // Pixeldaten (1 = Schwarz)
   for (let y = 0; y < height; y++) {
     for (let xByte = 0; xByte < bytesPerLine; xByte++) {
       let byte = 0;
@@ -57,21 +33,36 @@ function convertImageDataToPhomemo(imageData) {
         if (x >= width) continue;
         const idx = (y * width + x) * 4;
         const r = imageData.data[idx];
-        if (r < 128) byte |= 1 << (7 - bit); // dunkel = schwarz
+        if (r < 128) byte |= 1 << (7 - bit);
       }
-      output.push(byte);
+      bytes.push(byte);
     }
   }
-
-  // End-of-frame
-  output.push(0x1A);
-  return new Uint8Array(output);
+  return { width, height, bytesPerLine, bytes };
 }
 
-// --- Schreiben in 512-Byte-Chunks (BLE Limit) ---
-async function sendRaw(data) {
-  if (!characteristic) throw new Error("Keine Bluetooth-Verbindung");
+// erzeugt verschiedene Header-Varianten
+function makeVariants(img) {
+  const { width, height, bytesPerLine, bytes } = img;
+  const variants = [];
 
+  // Variante 1 – ESC L
+  let escL = [0x1B, 0x4C, bytesPerLine & 0xFF, (bytesPerLine >> 8) & 0xFF, height & 0xFF, (height >> 8) & 0xFF, ...bytes, 0x0A];
+  variants.push({ name: "ESC L", data: new Uint8Array(escL) });
+
+  // Variante 2 – Qx (0x51 0x78)
+  let qx = [0x51, 0x78, 0x00, 0x00, bytesPerLine & 0xFF, (bytesPerLine >> 8) & 0xFF, height & 0xFF, (height >> 8) & 0xFF, ...bytes, 0x1A];
+  variants.push({ name: "Qx", data: new Uint8Array(qx) });
+
+  // Variante 3 – 0x12 0x54 (neue D30+)
+  let t12 = [0x12, 0x54, bytesPerLine & 0xFF, (bytesPerLine >> 8) & 0xFF, height & 0xFF, (height >> 8) & 0xFF, ...bytes, 0x0A];
+  variants.push({ name: "12 54", data: new Uint8Array(t12) });
+
+  return variants;
+}
+
+// --- Schreiben in 512-Byte-Chunks ---
+async function sendRaw(data) {
   const CHUNK_SIZE = 512;
   for (let i = 0; i < data.length; i += CHUNK_SIZE) {
     const chunk = data.slice(i, i + CHUNK_SIZE);
@@ -80,24 +71,32 @@ async function sendRaw(data) {
   }
 }
 
-// --- Drucken ---
-async function printText(text) {
+// --- Testfunktion ---
+async function testPrinter() {
   if (!connected) {
     statusEl.textContent = "Bitte zuerst verbinden!";
     return;
   }
 
   try {
-    const bitmap = await textToBitmap(text);
-    await sendRaw(bitmap);
-    statusEl.textContent = "Gedruckt ✅";
+    const img = to1Bit(makeTestBitmap());
+    const variants = makeVariants(img);
+
+    for (let v of variants) {
+      statusEl.textContent = `Teste Variante: ${v.name}...`;
+      console.log(`Sende Variante: ${v.name}`);
+      await sendRaw(v.data);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    statusEl.textContent = "Test abgeschlossen. Welche Variante hat gedruckt?";
   } catch (err) {
     console.error(err);
-    statusEl.textContent = "Fehler beim Drucken: " + err.message;
+    statusEl.textContent = "Fehler beim Test: " + err.message;
   }
 }
 
-// --- Button: Verbinden ---
+// --- Verbinden ---
 document.getElementById("btn-pair").addEventListener("click", async () => {
   try {
     if (device && device.gatt.connected) {
@@ -106,7 +105,6 @@ document.getElementById("btn-pair").addEventListener("click", async () => {
       return;
     }
 
-    // Muss direkt im Click-Handler stehen (Chrome verlangt User-Gesture)
     device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: [0xff00, 0xff02],
@@ -143,12 +141,7 @@ document.getElementById("btn-pair").addEventListener("click", async () => {
   }
 });
 
-// --- Button: Drucken ---
+// --- Button: Test ---
 document.getElementById("btn-print").addEventListener("click", async () => {
-  const text = document.getElementById("input").value;
-  if (text.trim() === "") {
-    statusEl.textContent = "Bitte Text eingeben";
-    return;
-  }
-  await printText(text);
+  await testPrinter();
 });
