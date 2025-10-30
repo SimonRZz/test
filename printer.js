@@ -20,13 +20,13 @@ async function textToBitmap(text) {
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Text zentriert
-  let fontSize = 36;
-  ctx.font = `bold ${fontSize}px Arial`;
-  ctx.fillStyle = "black";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+// Schwarzer Text zentriert
+ctx.font = `bold ${fontSize}px Arial`;
+ctx.fillStyle = "black";
+ctx.textAlign = "center";
+ctx.textBaseline = "middle";
+ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
 
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   return convertImageDataToPhomemo(imageData);
@@ -56,7 +56,7 @@ function convertImageDataToPhomemo(imageData) {
         if (x >= width) continue;
         const idx = (y * width + x) * 4;
         const r = imageData.data[idx];
-        if (r < 128) byte |= 1 << (7 - bit);
+        if (r > 128) byte |= 1 << (7 - bit);
       }
       output.push(byte);
     }
