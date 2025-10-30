@@ -1,28 +1,38 @@
-// ==== Phomemo D30 Web Bluetooth (odensc base + emoji & dual buttons) ====
+// ==== Phomemo D30 Web Bluetooth Printer ====
 
 let device = null;
 let characteristic = null;
 let connected = false;
 const statusEl = document.getElementById("status");
 
-// --- Konvertierung von Text/Emoji zu Bitmap ---
+// --- Text & Emoji → Bitmap (12×40 mm = 320×96 px) ---
 async function textToBitmap(text) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  ctx.font = "24px Arial";
-  const textWidth = Math.ceil(ctx.measureText(text).width);
-  canvas.width = textWidth;
-  canvas.height = 32;
 
+  // 12 mm × 8 px/mm = 96 px Höhe, 40 mm × 8 px/mm = 320 px Breite
+  const labelHeight = 96;
+  const labelWidth = 320;
+  canvas.width = labelWidth;
+  canvas.height = labelHeight;
+
+  // Weißer Hintergrund
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Schwarzer Text zentriert
+  const fontSize = 36;
+  ctx.font = `bold ${fontSize}px Arial`;
   ctx.fillStyle = "black";
-  ctx.fillText(text, 0, 24);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
 
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   return convertImageDataToPhomemo(imageData);
 }
 
+// --- Bilddaten → 1-Bit-Bitmap für D30 ---
 function convertImageDataToPhomemo(imageData) {
   const width = imageData.width;
   const height = imageData.height;
@@ -40,16 +50,15 @@ function convertImageDataToPhomemo(imageData) {
         if (x >= width) continue;
         const idx = (y * width + x) * 4;
         const r = imageData.data[idx];
-        if (r < 128) byte |= 1 << (7 - bit);
+        if (r < 128) byte |= 1 << (7 - bit); // Schwarz wenn dunkel
       }
       output.push(byte);
     }
   }
-
   return new Uint8Array(output);
 }
 
-// --- Senden der Daten an Drucker (chunked) ---
+// --- Schreiben in 512-Byte-Chunks ---
 async function sendRaw(data) {
   if (!characteristic) throw new Error("Keine Bluetooth-Verbindung");
 
@@ -57,23 +66,20 @@ async function sendRaw(data) {
   for (let i = 0; i < data.length; i += CHUNK_SIZE) {
     const chunk = data.slice(i, i + CHUNK_SIZE);
     await characteristic.writeValue(chunk);
-    // kleine Pause, um Pufferüberlauf zu vermeiden
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise(r => setTimeout(r, 20)); // kleine Pause
   }
 }
 
-
-// --- Text drucken ---
+// --- Drucken ---
 async function printText(text) {
   if (!connected) {
     statusEl.textContent = "Bitte zuerst verbinden!";
     return;
   }
-
   try {
     const bitmap = await textToBitmap(text);
     await sendRaw(bitmap);
-    await sendRaw(Uint8Array.from([0x0a, 0x0a, 0x0a]));
+    await sendRaw(Uint8Array.from([0x0a, 0x0a, 0x0a])); // Papiervorschub
     statusEl.textContent = "Gedruckt ✅";
   } catch (err) {
     console.error(err);
@@ -90,7 +96,7 @@ document.getElementById("btn-pair").addEventListener("click", async () => {
       return;
     }
 
-    // 🔑 WICHTIG: direkt im Click-Handler ausführen!
+    // Muss direkt im Click-Handler stehen (Chrome-Anforderung)
     device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: [0xff00, 0xff02],
