@@ -1,4 +1,4 @@
-// ==== Phomemo D30 Web Bluetooth Printer ====
+// ==== Phomemo D30 Web Bluetooth Printer – fixed D30 command set ====
 
 let device = null;
 let characteristic = null;
@@ -16,12 +16,12 @@ async function textToBitmap(text) {
   canvas.width = labelWidth;
   canvas.height = labelHeight;
 
-  // Weißer Hintergrund
+  // Hintergrund weiß
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Schwarzer Text zentriert
-  const fontSize = 36;
+  // Text zentriert
+  let fontSize = 36;
   ctx.font = `bold ${fontSize}px Arial`;
   ctx.fillStyle = "black";
   ctx.textAlign = "center";
@@ -32,16 +32,22 @@ async function textToBitmap(text) {
   return convertImageDataToPhomemo(imageData);
 }
 
-// --- Bilddaten → 1-Bit-Bitmap für D30 ---
+// --- D30-kompatible Bitmap-Erzeugung ---
 function convertImageDataToPhomemo(imageData) {
   const width = imageData.width;
   const height = imageData.height;
   const bytesPerLine = Math.ceil(width / 8);
   const output = [];
 
-  // Startbefehl für Bitmapdruck
-  output.push(0x1f, 0x11, bytesPerLine & 0xff, height & 0xff);
+  // Korrektes D30-Header-Format: ESC L (0x1B 0x4C)
+  output.push(0x1B, 0x4C);
 
+  // Breite (low/high)
+  output.push(bytesPerLine & 0xff, (bytesPerLine >> 8) & 0xff);
+  // Höhe (low/high)
+  output.push(height & 0xff, (height >> 8) & 0xff);
+
+  // Pixeldaten (invertiert: 1 = Schwarz)
   for (let y = 0; y < height; y++) {
     for (let xByte = 0; xByte < bytesPerLine; xByte++) {
       let byte = 0;
@@ -50,11 +56,14 @@ function convertImageDataToPhomemo(imageData) {
         if (x >= width) continue;
         const idx = (y * width + x) * 4;
         const r = imageData.data[idx];
-        if (r < 128) byte |= 1 << (7 - bit); // Schwarz wenn dunkel
+        if (r < 128) byte |= 1 << (7 - bit);
       }
       output.push(byte);
     }
   }
+
+  // Zeilenumbruch
+  output.push(0x0a);
   return new Uint8Array(output);
 }
 
@@ -79,7 +88,6 @@ async function printText(text) {
   try {
     const bitmap = await textToBitmap(text);
     await sendRaw(bitmap);
-    await sendRaw(Uint8Array.from([0x0a, 0x0a, 0x0a])); // Papiervorschub
     statusEl.textContent = "Gedruckt ✅";
   } catch (err) {
     console.error(err);
@@ -96,7 +104,7 @@ document.getElementById("btn-pair").addEventListener("click", async () => {
       return;
     }
 
-    // Muss direkt im Click-Handler stehen (Chrome-Anforderung)
+    // Direkt im Click-Handler – Chrome verlangt User-Gesture
     device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: [0xff00, 0xff02],
