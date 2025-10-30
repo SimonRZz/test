@@ -11,11 +11,15 @@ async function connectPrinter() {
     }
 
     if (!bluetoothDevice) {
-      bluetoothDevice = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: "Phomemo" }],
-        optionalServices: [0xff00],
-      });
-    }
+  bluetoothDevice = await navigator.bluetooth.requestDevice({
+    filters: [
+      { namePrefix: "Phomemo" },
+      { namePrefix: "PM-" },
+      { name: "D30" }
+    ],
+    optionalServices: [0xff00]
+  });
+}
 
     const server = await bluetoothDevice.gatt.connect();
     const service = await server.getPrimaryService(0xff00);
