@@ -1,68 +1,14 @@
-// ==== Phomemo D30 Web Bluetooth (based on odensc version, improved) ====
+// ==== Phomemo D30 Web Bluetooth (odensc base + emoji & dual buttons) ====
 
 let device = null;
 let characteristic = null;
 let connected = false;
-
 const statusEl = document.getElementById("status");
 
-async function connectPrinter() {
-  try {
-    if (device && device.gatt.connected) {
-      statusEl.textContent = `Bereits verbunden mit ${device.name}`;
-      connected = true;
-      return;
-    }
-
-    if (!device) {
-      device = await navigator.bluetooth.requestDevice({
-  acceptAllDevices: true,
-  optionalServices: [0xff00, 0xff02],
-});
-    }
-
-    const server = await device.gatt.connect();
-    const services = await server.getPrimaryServices();
-
-    // Suche dynamisch nach der passenden Characteristic
-    for (const service of services) {
-      const chars = await service.getCharacteristics();
-      for (const c of chars) {
-        if (c.properties.writeWithoutResponse || c.properties.write) {
-          characteristic = c;
-          break;
-        }
-      }
-      if (characteristic) break;
-    }
-
-    if (!characteristic) throw new Error("Keine passende Schreib-Characteristic gefunden");
-
-    device.addEventListener("gattserverdisconnected", () => {
-      connected = false;
-      characteristic = null;
-      statusEl.textContent = "Verbindung getrennt – bitte neu verbinden";
-    });
-
-    connected = true;
-    statusEl.textContent = `Verbunden mit ${device.name}`;
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = "Verbindungsfehler: " + err.message;
-  }
-}
-
-// sendet rohe Daten an Drucker
-async function sendRaw(data) {
-  if (!characteristic) await connectPrinter();
-  await characteristic.writeValue(data);
-}
-
-// rendert Text + Emojis als Bitmap für D30
+// --- Konvertierung von Text/Emoji zu Bitmap ---
 async function textToBitmap(text) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-
   ctx.font = "24px Arial";
   const textWidth = Math.ceil(ctx.measureText(text).width);
   canvas.width = textWidth;
@@ -77,7 +23,6 @@ async function textToBitmap(text) {
   return convertImageDataToPhomemo(imageData);
 }
 
-// wandelt ImageData in 1-Bit Schwarz/Weiß um (D30-Format)
 function convertImageDataToPhomemo(imageData) {
   const width = imageData.width;
   const height = imageData.height;
@@ -104,6 +49,13 @@ function convertImageDataToPhomemo(imageData) {
   return new Uint8Array(output);
 }
 
+// --- Senden der Daten an Drucker ---
+async function sendRaw(data) {
+  if (!characteristic) throw new Error("Keine Bluetooth-Verbindung");
+  await characteristic.writeValue(data);
+}
+
+// --- Text drucken ---
 async function printText(text) {
   if (!connected) {
     statusEl.textContent = "Bitte zuerst verbinden!";
@@ -121,8 +73,53 @@ async function printText(text) {
   }
 }
 
-// === Buttons ===
-document.getElementById("btn-pair").addEventListener("click", connectPrinter);
+// --- Button: Verbinden ---
+document.getElementById("btn-pair").addEventListener("click", async () => {
+  try {
+    if (device && device.gatt.connected) {
+      statusEl.textContent = `Bereits verbunden mit ${device.name}`;
+      connected = true;
+      return;
+    }
+
+    // 🔑 WICHTIG: direkt im Click-Handler ausführen!
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [0xff00, 0xff02],
+    });
+
+    const server = await device.gatt.connect();
+    const services = await server.getPrimaryServices();
+
+    for (const service of services) {
+      const chars = await service.getCharacteristics();
+      for (const c of chars) {
+        if (c.properties.writeWithoutResponse || c.properties.write) {
+          characteristic = c;
+          break;
+        }
+      }
+      if (characteristic) break;
+    }
+
+    if (!characteristic)
+      throw new Error("Keine gültige Schreib-Characteristic gefunden.");
+
+    connected = true;
+    statusEl.textContent = `Verbunden mit ${device.name}`;
+
+    device.addEventListener("gattserverdisconnected", () => {
+      connected = false;
+      characteristic = null;
+      statusEl.textContent = "Verbindung getrennt – bitte erneut verbinden";
+    });
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Verbindungsfehler: " + err.message;
+  }
+});
+
+// --- Button: Drucken ---
 document.getElementById("btn-print").addEventListener("click", async () => {
   const text = document.getElementById("input").value;
   if (text.trim() === "") {
