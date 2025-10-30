@@ -49,11 +49,19 @@ function convertImageDataToPhomemo(imageData) {
   return new Uint8Array(output);
 }
 
-// --- Senden der Daten an Drucker ---
+// --- Senden der Daten an Drucker (chunked) ---
 async function sendRaw(data) {
   if (!characteristic) throw new Error("Keine Bluetooth-Verbindung");
-  await characteristic.writeValue(data);
+
+  const CHUNK_SIZE = 512;
+  for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+    const chunk = data.slice(i, i + CHUNK_SIZE);
+    await characteristic.writeValue(chunk);
+    // kleine Pause, um Pufferüberlauf zu vermeiden
+    await new Promise(r => setTimeout(r, 20));
+  }
 }
+
 
 // --- Text drucken ---
 async function printText(text) {
